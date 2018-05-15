@@ -7,7 +7,7 @@ import io.hydrosphere.serving.contract.utils.description.ContractDescription
 import io.hydrosphere.serving.contract.utils.ops.ModelContractOps._
 import io.hydrosphere.serving.manager.controller.model.ModelUpload
 import io.hydrosphere.serving.manager.model._
-import io.hydrosphere.serving.manager.model.api.{ModelMetadata, ModelType}
+import io.hydrosphere.serving.manager.model.api.ModelType
 import io.hydrosphere.serving.manager.model.db.Model
 import io.hydrosphere.serving.manager.repository._
 import io.hydrosphere.serving.manager.service.contract.ContractUtilityService
@@ -42,7 +42,6 @@ class ModelManagementServiceImpl(
       case Right(_) => Result.clientErrorF(s"Model id ${model.id} already exists")
     }
   }
-
 
   override def updateModel(model: Model): HFResult[Model] = {
     modelRepository.get(model.id).flatMap {
@@ -110,15 +109,6 @@ class ModelManagementServiceImpl(
     }
   }
 
-  private def updateModelContract(modelId: Long, modelContract: ModelContract): HFResult[Model] = {
-    getModel(modelId).flatMap {
-      case Left(err) => Result.errorF(err)
-      case Right(model) =>
-        val newModel = model.copy(modelContract = modelContract)
-        updateModel(newModel)
-    }
-  }
-
   override def modelsByType(types: Set[String]): Future[Seq[Model]] =
     modelRepository.fetchByModelType(types.map(ModelType.fromTag).toSeq)
 
@@ -142,6 +132,24 @@ class ModelManagementServiceImpl(
     f.value
   }
 
+  override def uploadModel(upload: ModelUpload): HFResult[Model] = {
+    val f = for {
+      result <- EitherT(sourceManagementService.upload(upload))
+      request <- EitherT(checkAndToRequest(result))
+      r <- EitherT(upsertRequest(request))
+    } yield r
+    f.value
+  }
+
+  private def updateModelContract(modelId: Long, modelContract: ModelContract): HFResult[Model] = {
+    getModel(modelId).flatMap {
+      case Left(err) => Result.errorF(err)
+      case Right(model) =>
+        val newModel = model.copy(modelContract = modelContract)
+        updateModel(newModel)
+    }
+  }
+
   private def checkAndToRequest(result: StorageUploadResult): HFResult[CreateOrUpdateModelRequest] = {
     if (result.modelContract.signatures.nonEmpty) {
       Result.okF(
@@ -157,36 +165,6 @@ class ModelManagementServiceImpl(
       Result.clientErrorF("Contract neither specified nor inferred. Unable to upload.")
     }
   }
-
-  override def uploadModel(upload: ModelUpload): HFResult[Model] = {
-    val f = for {
-      result <- EitherT(sourceManagementService.upload(upload))
-      request <- EitherT(checkAndToRequest(result))
-      r <- EitherT(upsertRequest(request))
-    } yield r
-    f.value
-  }
-
-
-  private def metadataToCreate(modelMetadata: ModelMetadata, source: String): CreateOrUpdateModelRequest = {
-    CreateOrUpdateModelRequest(
-      id = None,
-      name = modelMetadata.modelName,
-      modelType = modelMetadata.modelType,
-      description = None,
-      modelContract = modelMetadata.contract
-    )
-  }
-
-  private def applyModelMetadata(modelMetadata: ModelMetadata, model: Model, updated: LocalDateTime = LocalDateTime.now()): Model = {
-    model.copy(
-      name = modelMetadata.modelName,
-      modelType = modelMetadata.modelType,
-      modelContract = modelMetadata.contract,
-      updated = updated
-    )
-  }
-
 
   private def upsertRequest(request: CreateOrUpdateModelRequest): Future[Either[Result.HError, Model]] = {
     modelRepository.get(request.name).flatMap {
