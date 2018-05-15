@@ -11,7 +11,7 @@ import io.hydrosphere.serving.manager.model.api.{ModelMetadata, ModelType}
 import io.hydrosphere.serving.manager.model.db.Model
 import io.hydrosphere.serving.manager.repository._
 import io.hydrosphere.serving.manager.service.contract.ContractUtilityService
-import io.hydrosphere.serving.manager.service.source.ModelStorageService
+import io.hydrosphere.serving.manager.service.source.{ModelStorageService, StorageUploadResult}
 import cats.data.EitherT
 import cats.implicits._
 import org.apache.logging.log4j.scala.Logging
@@ -142,20 +142,31 @@ class ModelManagementServiceImpl(
     f.value
   }
 
+  private def checkAndToRequest(result: StorageUploadResult): HFResult[CreateOrUpdateModelRequest] = {
+    if (result.modelContract.signatures.isEmpty) {
+      Result.okF(
+        CreateOrUpdateModelRequest(
+          id = None,
+          name = result.name,
+          modelType = result.modelType,
+          description = result.description,
+          modelContract = result.modelContract
+        )
+      )
+    } else {
+      Result.clientErrorF("Contract neither specified nor inferred. Unable to upload.")
+    }
+  }
+
   override def uploadModel(upload: ModelUpload): HFResult[Model] = {
     val f = for {
       result <- EitherT(sourceManagementService.upload(upload))
-      request = CreateOrUpdateModelRequest(
-        id = None,
-        name = result.name,
-        modelType = result.modelType,
-        description = result.description,
-        modelContract = result.modelContract
-      )
+      request <- EitherT(checkAndToRequest(result))
       r <- EitherT(upsertRequest(request))
     } yield r
     f.value
   }
+
 
   private def metadataToCreate(modelMetadata: ModelMetadata, source: String): CreateOrUpdateModelRequest = {
     CreateOrUpdateModelRequest(
