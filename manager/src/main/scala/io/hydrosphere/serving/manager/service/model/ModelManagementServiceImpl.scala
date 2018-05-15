@@ -143,7 +143,7 @@ class ModelManagementServiceImpl(
   }
 
   private def checkAndToRequest(result: StorageUploadResult): HFResult[CreateOrUpdateModelRequest] = {
-    if (result.modelContract.signatures.isEmpty) {
+    if (result.modelContract.signatures.nonEmpty) {
       Result.okF(
         CreateOrUpdateModelRequest(
           id = None,
